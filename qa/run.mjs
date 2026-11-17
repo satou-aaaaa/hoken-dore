@@ -69,6 +69,12 @@ const OKSRC = /^https:\/\/(www\.mhlw\.go\.jp|www\.hellowork\.mhlw\.go\.jp|www\.k
   check("2段目は5つとも使う・選び肢に保険の名前を書かない（1段目の答えを見ても、保険料の払い方を思い出さないと選べない）", new Set(G.KINDS.map((k) => k.grp)).size === 5 && Object.keys(G.GROUPS).length === 5 && !Object.values(G.GROUPS).some((g) => /健康|年金|雇用|労災|介護/.test(g.name + g.sub)));
   check("もらえる額・保険料率の数字を問題にしない（AGENTS.md）", !/[0-9０-９]+(円|万|%|％|割)/.test(readFileSync(path.join(root, "data.js"), "utf8")));
 }
+// 2段目は「会社で働く人の場合」。40〜64歳の会社員の介護保険料は会社と本人で半分ずつなので、「半分ずつ」の札と介護保険の札が両方正しく見えないようにする（hoken-dore #1 の CodeRabbit）
+check("2段目：介護保険の札は会社員の折半も書き、「半分ずつ」の札は年齢で変わらない保険だと書く（どちらも正しく見える札を作らない）", /会社員/.test(G.GROUPS.kaigo.sub) && /半分ずつ/.test(G.GROUPS.kaigo.sub) && /年齢で変わらない/.test(G.GROUPS.seppan.sub) && /会社と本人で半分ずつ/.test(G.GRP_WHY.kaigo));
+// 要支援の人の訪問介護・通所介護（家事の手伝いなど）は総合事業（地域支援事業）に移っていて、予防給付ではない（hoken-dore #1 の CodeRabbit）
+{ const yb = G.KINDS.filter((k) => /予防給付/.test(k.name + k.why + (k.note || ""))), bad = [];
+  for (const k of yb) for (let s = 0; s < 300; s++) { const P = G.make(`${k.id}|yb${s}`); if (/家事|訪問介護|通所介護|デイサービス|ホームヘルプ/.test(P.q)) { bad.push(`${k.id}:${P.q}`); break; } }
+  check("予防給付と説明する種類の場面に、総合事業へ移ったサービス（家事の手伝い・訪問介護・通所介護）を出さない", yb.length > 0 && bad.length === 0, bad.join(" / ")); }
 {
   // 今日の5問・上級の組み方（3年分）
   const bad = [], cover = new Set(); let sameAsPrev = 0, prev = "";
@@ -526,6 +532,16 @@ try {
   await q.close(); }
 { const bad = G.KINDS.filter((k) => { for (let i = 0; i < 200; i++) if (!G.GROUPS[G.make(`${k.id}|g${i}`).grp]) return true; return false; }).map((k) => k.id), used = new Set(G.KINDS.map((k) => k.grp));
   check("2段目の答え：どの種類の問題も5つのどれかで、5つとも使う", bad.length === 0 && used.size === 5, bad.join(",")); }
+// ことば帳から始める1種類の練習は、どの種類も5問（ちがう問題が5通り無い種類で4問以下になっていた。shared-workflows#409）
+{ const q = await newPage(); await closeHow(q);
+  const few = await q.evaluate((ids) => ids.filter((id) => { __nm.start("p", id); const r = __nm.load().runs.p; return !r || r.list.length !== 5 || r.list.some((t) => t.split("|")[0] !== id); }), G.KINDS.map((k) => k.id));
+  check("ことば帳から始める1種類の練習は、どの種類も5問になる（ちがう問題が5通り無い種類でも）", few.length === 0, few.join(","));
+  await q.close(); }
+// 記録の数の欄に、数でも文字でもない値（{toString:null} など）が入っていても、画面が出る（hoken-dore #1 の CodeRabbit）
+{ const q = await newPage(); await closeHow(q);
+  await q.evaluate((k) => localStorage.setItem(k, JSON.stringify({ v: 1, tut: true, ebest: { toString: null }, days: {}, hdays: {}, adays: {}, dex: {}, runs: {}, kofi: {}, ach: {} })), "hkn-v1"); await q.reload(); await q.waitForTimeout(200);
+  check("記録の数の欄が数でも文字でもなくても、ホームが出る（数にするのは数と文字だけ）", await q.locator("#go-d").count() === 1 && await q.evaluate(() => __nm.load().ebest) === 0);
+  await q.close(); }
 // 引き継ぎコード（shared-workflows template/qa/transfer-check.mjs）
 try {
   const sample = { "hkn-v1": JSON.stringify({ v: 1, tut: true, days: { "2026-11-13": { m: [0, 1, 0, 0, 2], k: ["e_byoin", "e_shitsugyo", "n_shobyo", "n_shogai", "h_ninni"] } }, hdays: {}, adays: {}, dex: { e_byoin: 1, e_shigoto: 1, e_rourei: 1, n_shobyo: 1, n_kogaku: 1 }, runs: {}, kofi: {}, ach: {}, ebest: 7, t: 1 }), "hkn-fs": "3", "hkn-depth": JSON.stringify({ v: 1, rv: { "e_byoin|x1": { s: 1, due: "2026-11-20", t: 5 } } }) }; // 復習の記録も引き継ぐかを見る（CodeRabbit shingo-yomi#1）
